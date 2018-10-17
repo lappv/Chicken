@@ -5,17 +5,19 @@ class SearchBot
     private static $modelName = '/models/';
     private static $controllerName = '/controllers/';
     private static $testName = '/tests/';
-    private static $keySearch = 'read2-dexter';
     private static $ITER_MAX = 7;
     private static $constructFunction = '__construct';
 
     private $modelFiles = array();
     private $controllerFiles = array();
-    private $folderParent;
 
-    public function __constructor($folderParent)
+    private $folderParent;
+    private $keySearch;
+
+    public function __constructor($folderParent, $keySearch)
     {
         $this->folderParent = $folderParent;
+        $this->keySearch = $keySearch;
     }
 
     /**
@@ -206,8 +208,8 @@ class SearchBot
         echo sizeof($this->modelFiles) . ' ' . sizeof($this->controllerFiles);
 
         echo "\nseaching ...\n";
-        $tree = $this->search(self::$keySearch, '', false);
-        $result = $this->treeToArray(self::$keySearch, $tree[self::$keySearch]);
+        $tree = $this->search($this->keySearch, '', false);
+        $result = $this->treeToArray($this->keySearch, $tree[$this->keySearch]);
 
         echo "write file ...\n";
         $this->writeCSVFile($result);
@@ -216,7 +218,7 @@ class SearchBot
     }
 }
 
-$searchBot = new SearchBot('applications/api');
+$searchBot = new SearchBot('applications/api', 'read2-dexter');
 // echo json_encode(searchInFile('applications/api///models/new_segments_research_answers_model.php', '/read2-dexter/')) . "\n";
 echo json_encode($searchBot->main()) . "\n";
 // echo json_encode($searchBot->treeToArray(
