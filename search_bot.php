@@ -5,7 +5,7 @@ class SearchBot
     private static $modelName = '/models/';
     private static $controllerName = '/controllers/';
     private static $testName = '/tests/';
-    private static $ITER_MAX = 7;
+    private static $MAX_SEARCH = 20;
     private static $constructFunction = '__construct';
 
     private $modelFiles = array();
@@ -14,7 +14,7 @@ class SearchBot
     private $folderParent;
     private $keySearch;
 
-    public function __constructor($folderParent, $keySearch)
+    public function __construct($folderParent, $keySearch)
     {
         $this->folderParent = $folderParent;
         $this->keySearch = $keySearch;
@@ -52,7 +52,7 @@ class SearchBot
      *
      * @return array name of function
      */
-    public function searchInFile($file, $pattern)
+    public function searchInFile($file, $pattern, $inFile)
     {
         $result = array();
 
@@ -73,23 +73,28 @@ class SearchBot
         $functionName = '';
         $structOpen = 0;
         while (($line = fgets($handle)) !== false) {
-            if ($functionName === '' && preg_match('/function\s+(.*)\(.*\)\s*/', $line, $matches)) {
+            if ($functionName === '' && preg_match('/(private|protected)?\s*function\s+([^\(\)]*)\(.*\)\s*/', $line, $matches)) {
                 if (strpos($line, '{') === false) {
                     $line = fgets($handle);
                     if (strpos($line, '{') === false) {
                         continue;
                     }
                 }
-                $functionName = $matches[1];
+                $functionName = $matches[2];
                 $structOpen++;
                 continue;
             }
             if ($functionName === '') {
                 continue;
             }
-            if (preg_match($pattern, $line) === 1) {
+            if (preg_match($pattern, $line, $patternMatch) === 1) {
                 //found!!!
-                $result[] = $functionName;
+                //check if class call self function
+                if (!((sizeof($patternMatch) > 1 && $patternMatch[1] == 'this') ^ ($file == $inFile))) {
+                    if ($inFile == '' || $file == $inFile || preg_match_all('/' . $this->getPHPFileName($inFile) . '/', file_get_contents($file))) {
+                        $result[$functionName] = $matches[1] == 'private' || $matches[1] == 'protected';
+                    }
+                }
             }
             if (strpos($line, '{')) {
                 $structOpen++;
@@ -110,25 +115,29 @@ class SearchBot
      *
      * @param string $key key word
      * @param string $inFile
+     * @param string $files list destination files
      * @param boolean $isFuncName
      *
      * @return array reverse tree format
      */
-    public function search($key, $inFile = '', $isFuncName = false, $max = 0)
+    public function search($key, $inFile = '', $files, $isFuncName = false, $max = 0)
     {
         $pattern = $this->makePattern($key, $isFuncName);
         echo sprintf("START[%s] searching for pattern: %s\n", $max, $pattern);
         $result = array();
-        $subResult = null;
-        if ($max <= self::$ITER_MAX && ($inFile == '' || $this->isModel($inFile))) {
-            foreach (array_merge($this->modelFiles, $this->controllerFiles) as $file) {
-                $funcMatches = $this->searchInFile($file, $pattern);
+        $subResult = array();
+        if ($max <= self::$MAX_SEARCH) {
+            foreach ($files as $file) {
+                $funcMatches = $this->searchInFile($file, $pattern, $inFile);
                 if (!empty($funcMatches)) {
                     echo sprintf("searching for pattern: %s\n", $pattern);
                     echo $file . ' => ' . json_encode($funcMatches) . "\n";
-                    foreach ($funcMatches as $funcMatch) {
-                        $subResult = $subResult == null ? array() : $subResult;
-                        $subResult = array_merge($subResult, $this->search($funcMatch, $file, true, $max + 1));
+                    foreach ($funcMatches as $funcMatch => $isPrivate) {
+                        if ($isPrivate || $this->isController($file)) {
+                            $subResult = array_merge($subResult, $this->search($funcMatch, $file, array($file), true, $max + 1));
+                        } else {
+                            $subResult = array_merge($subResult, $this->search($funcMatch, $file, array_merge($this->modelFiles, $this->controllerFiles), true, $max + 1));
+                        }
                     }
                 }
             }
@@ -168,7 +177,15 @@ class SearchBot
         if (!$isFuncName) {
             return '/' . $key . '/';
         }
-        return '/(->|=)\s*' . $key . '\(/';
+        return '/(this)?(->|=)\s*' . $key . '\(/';
+    }
+
+    public function getPHPFileName($filePath) 
+    {
+        if (preg_match('/(.*\/)?([^\/]*).php/', $filePath, $matches)) {
+            return $matches[2];
+        }
+        return '';
     }
 
     public function treeToArray($note, $subTree)
@@ -189,7 +206,7 @@ class SearchBot
 
     public function writeCSVFile($resultArr)
     {
-        $fileName = 'result-aslan.csv';
+        $fileName = 'result-aslan_batch.csv';
         $fo = fopen($fileName, 'w');
         if ($resultArr != null) {
             foreach ($resultArr as $item) {
@@ -201,30 +218,26 @@ class SearchBot
 
     public function main()
     {
-        echo "list files ...\n";
+        echo "list files ...\n"; 
         $files = $this->getPHPFile($this->folderParent, '');
         $this->modelFiles = $files[0];
         $this->controllerFiles = $files[1];
         echo sizeof($this->modelFiles) . ' ' . sizeof($this->controllerFiles);
-
+       
         echo "\nseaching ...\n";
-        $tree = $this->search($this->keySearch, '', false);
+        $tree = $this->search($this->keySearch, '', array_merge($this->modelFiles, $this->controllerFiles), false);
         $result = $this->treeToArray($this->keySearch, $tree[$this->keySearch]);
-
+       
         echo "write file ...\n";
         $this->writeCSVFile($result);
-
+       
         return $result;
     }
 }
 
 $searchBot = new SearchBot('applications/api', 'read2-dexter');
-// echo json_encode(searchInFile('applications/api///models/new_segments_research_answers_model.php', '/read2-dexter/')) . "\n";
 echo json_encode($searchBot->main()) . "\n";
-// echo json_encode($searchBot->treeToArray(
-//     'root',
-//     array(
-//         'a' => array('c' => null, 'd' => array('e' => null)),
-//         'b' => null,
-//     )
-// ));
+// echo $searchBot->getPHPFileName('//ad/bxd/new_outcome_data_model.php');
+// $str = 'Private function _request_member_data()';
+// preg_match('/(private|protected)?\s*function\s+([^\(\)]*)\(.*\)\s*/i', $str, $matches);
+// echo json_encode($matches);
